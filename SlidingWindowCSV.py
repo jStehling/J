@@ -5,19 +5,15 @@ import isAccessHit
 
     #!  rows is a list where each element is a row in a csv file         !
 rows = []
-fileName = "DnsDetectionTest.csv"
+fileName = "DnsDetectionTest2.csv"
 
 #value for checking DNS tunneling ttl
-timebound = 1800;
+timebound = 180;
 dns_lines = []
-
-
 
 #converts string into formated time value
 def parse_time(time):
     return datetime.strptime(time, '%H:%M:%S')
-
-
 
 def wreit(results, dns_lines):
     with open("results.csv", mode='w', newline='') as file:
@@ -54,7 +50,7 @@ def read_file(unreadFileName):
 def invalid_ttl_check(row, timecheck):
 
     ttl = int(row[5])
-    if ttl <= 1800:
+    if ttl <= timebound:
         return True
     else:
             return False
@@ -84,8 +80,6 @@ def volume_traffic_monitor(size):
 def find_largest(dict):
     newdict = {}
 
-
-
     key = max(dict, key=dict.get)
     value = dict[key]
 
@@ -94,9 +88,6 @@ def find_largest(dict):
     newdict[key] = value
 
     return newdict
-
-#recieves a list of ip. these ips have the most AMC
-#function finds the traffic for current window
 
 
 # sliding window algorithm
@@ -117,6 +108,12 @@ def sliding_window(size, increase):
     no_response = {}
     no_respone_row = []
 
+    # Dict for calculating scores for IPs
+    ip_scores = {}
+
+    #dict for holding largest IPs
+    largest = {}
+
     while startingTime < endingTime:
         #defining the window size
         startingMinute = startingTime.minute
@@ -127,19 +124,30 @@ def sliding_window(size, increase):
         # access misscounts for current window. reset every window
         machines_AMC = {}
 
+
+
         # traffic count for every window, resets every window
         traffic = {}
         temprow = []
+
+        #dict for monitoring invalid TTL count
+        ip_invald_ttl = {}
+
         #inside the window
         for i in range(len(rows)):
             row = rows[i]
+
+            ip = row[2]
+
+            if ip not in ip_scores:
+                ip_scores[ip] = 1
 
             if windowStartingTime <= parse_time(row[0]) < windowEndingTime:\
 
                 #check flag if 0 / a query
                 if row[1] == '0':
                     temprow = row.copy()
-                    ip = row[2]
+
 
                     #checks ip and adds it to traffic counter
                     if ip in traffic:
@@ -147,6 +155,8 @@ def sliding_window(size, increase):
                        # print("IP: ", ip , " traffic: ",traffic[ip])
                     else:
                         traffic[ip] = 1
+                        ip_invald_ttl[ip] = 1
+
                        # print("IP: ", ip, " traffic: ", traffic[ip])
 
 
@@ -171,8 +181,8 @@ def sliding_window(size, increase):
                                 no_respone_row.append(row)
                                 machines_AMC[ip] = 1
 
-                            if nextrow not in dns_lines:
-                                dns_lines.append(nextrow)
+                            if row not in dns_lines:
+                                dns_lines.append(row)
                             #print("no response: " ,ip, " ", no_response[ip])
                             #print(row)
                         else:
@@ -182,8 +192,14 @@ def sliding_window(size, increase):
 
                                 source_machine = nextrow[3]
 
+                                if source_machine not in ip_invald_ttl:
+                                    ip_invald_ttl[source_machine] = 1
+                                else:
+                                    ip_invald_ttl[source_machine] += 1
+
                                 if source_machine in no_response.keys():
                                     if nextrow not in dns_lines:
+                                        dns_lines.append(row)
                                         dns_lines.append(nextrow)
                                     dns_counter += 1
 
@@ -209,17 +225,40 @@ def sliding_window(size, increase):
             #checls key is in dns_lines as source or destination, and appends it
             #to results if not already there
             largest = find_largest(machines_AMC)
-            for key in largest.keys():
-                #print(key, " AMC: ", largest[key], " traffic: ", traffic[key], " previous traffic: ", initial_base[key])
+
+            #following code is more for high throughput tunneling
+            if 1 == 2:
+                for key in largest.keys():
+                    #print(key, " AMC: ", largest[key], " traffic: ", traffic[key], " previous traffic: ", initial_base[key])
+                    if key in no_response.keys():
+                        if traffic[key] > initial_base[key] + increase:
+                            for x in range(len(dns_lines)):
+                                tempo = dns_lines[x]
+                                if key == tempo[2] or key == tempo[3]:
+                                    if key not in results:
+                                        results.append(key)
+
+            ip_scores.pop('192.168.68.1')
+
+            for key in ip_scores.keys():
+                multip = 1
+
                 if key in no_response.keys():
-                    if traffic[key] > initial_base[key] + increase:
-                        for x in range(len(dns_lines)):
-                            tempo = dns_lines[x]
-                            if key == tempo[2] or key == tempo[3]:
-                                if key not in results:
-                                    results.append(key)
+                    ip_scores[key] = ip_scores[key] + 3
 
+                if key in ip_invald_ttl.keys():
+                    ip_scores[key] = ip_scores[key] + 3
+                    multip += 1
 
+                if key in largest.keys():
+                    ip_scores[key] = ip_scores[key] + 2
+                    multip += 1
+
+                if traffic[key] > initial_base[key] + increase:
+                    ip_scores[key] = ip_scores[key] + 1
+                    multip += 1
+
+                ip_scores[key] = ip_scores[key] * multip
 
 
         print("new window")
@@ -227,17 +266,29 @@ def sliding_window(size, increase):
         #current traffic becomes old traffic
         initial_base = traffic.copy()
 
-    print("dnsT lines")
+    print("flagged dns tunneling lines")
     for x in dns_lines:
         print(x)
-    for x in results:
-        print(x)
+    print("infected computer/s")
+    for x in ip_scores.keys():
 
-    wreit(results, dns_lines)
+        if ip_scores[x] >= 40:
+            print(x)
+            print("IP DNST score: " , ip_scores[x])
+            if x in largest.keys():
+                print("AMC value: ", largest[x])
+            if x in no_response.keys():
+                print("no response count: ", no_response[x])
+            if x in ip_invald_ttl.keys():
+                print("TTL invald count: ", ip_invald_ttl[x])
+
+
+   # wreit(results, dns_lines)
 
     #return
 
 #increase is the increase in traffic to chekc for, size is the size of the window
 sliding_window(1, 10)
+
 
 
