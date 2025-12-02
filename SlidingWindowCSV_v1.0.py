@@ -14,10 +14,6 @@ rows = []
 #DnsDetectionTest2.csv (lower throughput)
 fileName = "personaltraffic(lower throughput).csv"
 
-#value for checking DNS tunneling ttl
-timebound = 120
-dns_lines = []
-
 #valid types
 valid_types = ["A", "AAAA"]
 
@@ -205,3 +201,4 @@ def sliding_window(size, increase):
 
 #increase is the increase in traffic to chekc for, size is the size of the window
 sliding_window(30, 30)
+
