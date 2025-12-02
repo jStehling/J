@@ -4,7 +4,7 @@ import csv
 ## Helper functions
 # Gets the domains from the access list to compare
 def getAccessList() -> None:
-        with open('AccessList.txt') as f:
+        with open('personalAccessList.txt') as f:
             return [line.strip() for line in f if line.strip()]
             
 
