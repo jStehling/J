@@ -5,15 +5,17 @@ from xmlrpc.client import Boolean
 import isAccessHit
 from scapy.supersocket import tpacket_auxdata
 
+import math
+
 #Program to parse through data using a sliding door algorithm
 
     #!  rows is a list where each element is a row in a csv file         !
 rows = []
-#DnsDetectionTest2.csv
-fileName = "personaltraffic.csv"
+#DnsDetectionTest2.csv (lower throughput)
+fileName = "personaltraffic(lower throughput).csv"
 
 #value for checking DNS tunneling ttl
-timebound = 120;
+timebound = 120
 dns_lines = []
 
 #valid types
@@ -53,7 +55,6 @@ def find_largest(dict):
     value = dict[key]
 
     newdict[key] = value
-
     return newdict
 
 def valid_type(type):
@@ -62,9 +63,11 @@ def valid_type(type):
 # sliding window algorithm
 # Uses the time value from file to define the size of the window
 def sliding_window(size, increase):
+    query = 0
+    response = 0
     read_file(fileName)
     results = []
-    dns_counter = 0
+    flagged = 0
 
     startingTime = parse_time(rows[0][0])
     endingTime = parse_time(rows[-1][0])
@@ -80,6 +83,9 @@ def sliding_window(size, increase):
     #holds qname and checks that a qname is repeated
     repeats = []
 
+    #repeated
+    repeated = []
+
     # Holds rows that are waiting for a response
     # {transaction ID : row}
     Pending_Transactions = {}
@@ -88,114 +94,114 @@ def sliding_window(size, increase):
     # {ip : [type, int]
     uncommon_count = {}
 
-    # {ip : row}
-    probable_tunneling = {}
 
-    while startingTime < endingTime:
-        # defining the window size
+    tunneling = []
 
-        windowStartingTime = startingTime
-        windowEndingTime = windowStartingTime + timedelta(seconds=size)
-        print(windowStartingTime, " | ", windowEndingTime)
+    uncommon_count = {}
 
+    # inside the window
+    for i in range(len(rows)):
 
+        row = rows[i]
+        # print(row)
 
-        #inside the window
-        for i in range(len(rows)):
+        response_flag = row[1]
+        qname = row[4]
+        type = row[5]
+        transactionID = row[7]
+        # row is a qeury
+        if response_flag == '0':
+            ip = row[2]
 
-            row = rows[i]
-            #print(row)
+            access_hit = isAccessHit.isAccessHit(qname)
+            if qname in repeats:
+                if qname not in repeated:
+                    repeated.append(qname)
+                    Access_Miss_count[ip] -= 1
 
-
-            if windowStartingTime <= parse_time(row[0]) < windowEndingTime:
-                timestamp = row[0]
-                response_flag = row[1]
-                qname = row[4]
-                type = row[5]
-                transactionID = row[7]
-                #row is a qeury
-                if response_flag == '0':
-                    dns_counter+= 1
-
-                    if qname in repeats:
-                        repeats.remove(qname)
-
-                    ip = row[2]
-
-                    access_hit = isAccessHit.isAccessHit(qname)
-                    if not access_hit:
-
-                        if qname not in repeats:
-                            repeats.append(qname)
-
-                        flag = False
-                        #add ip into AMC or add 1
-                        if ip not in Access_Miss_count:
-                            Access_Miss_count[ip] = 1
-                        else:
-                            Access_Miss_count[ip] += 1
-
-                        if len(qname) > 70 or not valid_type(type):
-
-                            if not valid_type(type):
-                                if ip not in uncommon_count.keys():
-                                    uncommon_count[ip] = 1
-                                else:
-                                    uncommon_count[ip] += 1
-                                    print(ip, " | ", uncommon_count[ip])
-
-                            Access_Misses[qname] = row
-                            Pending_Transactions[transactionID] = row
-
-                #row is a response
+                if qname in Access_Misses.keys():
+                    Access_Misses.pop(qname)
+            elif not access_hit and len(qname) > 25 and valid_type(type):
+                continue
+            elif not access_hit and (len(qname) > 70 or not valid_type(type)):
+                flagged += 1
+                if qname not in repeats:
+                    repeats.append(qname)
+                flag = False
+                # add ip into AMC or add 1
+                if ip not in Access_Miss_count:
+                    Access_Miss_count[ip] = 1
                 else:
-                    if transactionID in Pending_Transactions.keys():
-                        Pending_Transactions.pop(transactionID)
+                    Access_Miss_count[ip] += 1
 
-            if ip in uncommon_count.keys():
-                if uncommon_count[ip] > 4000000 and Access_Miss_count[ip] > 20:
-                    print("TUNNELING at: ", ip)
-                    print("CHECKED FLAGGED ROWS")
-                    print("ALL ACCESS MISSES AND HIT ONE FLAG")
-                    for x in Access_Misses.keys():
-                        print(x, " | ", Access_Misses[x])
-                    print("----------------------------")
-                    print("ACCESS MISS COUNTS")
-                    for x in Access_Miss_count:
-                        print(x, " | ", Access_Miss_count[x])
-                    print("----------------------------")
-                    print("ALL PENDING RESPONSES/NO RESPONSES")
-                    for x in Pending_Transactions.keys():
-                        print(x, " | ", Pending_Transactions[x])
-                    print("----------------------------")
-                    print("UNCOMMON QUERY TYPE COUNT")
-                    for x in uncommon_count.keys():
-                        print(x, " | ", uncommon_count[x])
-                    exit()
+                if not valid_type(type):
+                    if ip not in uncommon_count.keys():
+                        uncommon_count[ip] = 1
+                    else:
+                        uncommon_count[ip] += 1
 
-        startingTime = windowEndingTime + timedelta(seconds=1)
-        print(startingTime, " | ", windowEndingTime)
+                Access_Misses[qname] = row
+                Pending_Transactions[transactionID] = row
+
+        # row is a response
+        else:
+            response +=1
+
+            if transactionID in Pending_Transactions.keys():
+                if qname in Access_Misses.keys():
+                    tunneling.append(Pending_Transactions[transactionID])
+                    tunneling.append(row)
+                Pending_Transactions.pop(transactionID)
+
+        if ip in uncommon_count.keys():
+            if uncommon_count[ip] > 4000000 and Access_Miss_count[ip] > 20:
+                print("TUNNELING at: ", ip)
+                print("CHECKED FLAGGED ROWS")
+                print("ALL ACCESS MISSES AND HIT ONE FLAG")
+                for x in Access_Misses.keys():
+                    print(x, " | ", Access_Misses[x])
+                print("----------------------------")
+                print("ACCESS MISS COUNTS")
+                for x in Access_Miss_count:
+                    print(x, " | ", Access_Miss_count[x])
+                print("----------------------------")
+                print("ALL PENDING RESPONSES/NO RESPONSES")
+                for x in Pending_Transactions.keys():
+                    print(x, " | ", Pending_Transactions[x])
+                print("----------------------------")
+                print("UNCOMMON QUERY TYPE COUNT")
+                for x in uncommon_count.keys():
+                    print(x, " | ", uncommon_count[x])
+                exit()
+    for x in Pending_Transactions.keys():
+        if valid_type(Pending_Transactions[x][5]):
+            tunneling.append(Pending_Transactions[x])
+
+    #write_results(Access_Misses, Access_Miss_count, Pending_Transactions, uncommon_count, tunneling)
 
     for ip in uncommon_count.keys():
-        if uncommon_count[ip] > 40 and Access_Miss_count[ip] > 20:
+        if uncommon_count[ip] > 4 and Access_Miss_count[ip] > 4:
             print("TUNNELING at: ", ip)
             print("CHECKED FLAGGED ROWS")
             print("ALL ACCESS MISSES AND HIT ONE FLAG")
             for x in Access_Misses.keys():
                 print(x, " | ", Access_Misses[x])
+               # print("entropy score: ", entropy(x))
             print("----------------------------")
+            print("FLAGGED: ", flagged)
             print("ACCESS MISS COUNTS")
+            AMC = 0
             for x in Access_Miss_count:
                 print(x, " | ", Access_Miss_count[x])
+                AMC  = Access_Miss_count[x]
+            print("REMOVED FROM FLAGGED ROWS: ", flagged - AMC)
+            print("UNCOMMON QUERY TYPE COUNT")
+            for x in uncommon_count.keys():
+                print(x, " | ", uncommon_count[x])
             print("----------------------------")
             print("ALL PENDING RESPONSES/NO RESPONSES")
             for x in Pending_Transactions.keys():
                 print(x, " | ", Pending_Transactions[x])
-            print("----------------------------")
-            print("UNCOMMON QUERY TYPE COUNT")
-            for x in uncommon_count.keys():
-                print(x, " | ", uncommon_count[x])
-    #return
 
 #increase is the increase in traffic to chekc for, size is the size of the window
 sliding_window(30, 30)
